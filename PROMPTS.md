@@ -1,62 +1,47 @@
+# AI Prompt and Development Log
 
-# TrustVault — AI Development Log
+This file documents how I use AI to plan, develop, review, and troubleshoot TrustVault. I verify suggestions instead of assuming generated code is correct.
 
-## Project Context
+## Entry 1 — 21 October 2026: Project Setup
 
-TrustVault is a secure document-sharing application built
-with Next.js, TypeScript, Supabase, and PostgreSQL.
+Prompt: Help me plan TrustVault, a secure document-sharing application using Next.js, TypeScript, Supabase, and AWS, with beginner-friendly setup instructions.
 
-The application must enforce server-side authorization,
-protect private documents, support immediate permission
-revocation for future requests, and maintain a
-tamper-evident audit trail.
+Outcome: Created the Next.js project, installed dependencies, ran the application locally, prepared documentation, and pushed the initial Git commit.
 
-## Reusable Instructions for AI
+Verification: Local application startup and Git setup were checked. Security features were not yet verified.
 
-When helping with TrustVault:
+## Entry 2 — 21 October 2026: Document Authorization
 
-- Explain solutions for a beginner.
-- Make small, verifiable changes.
-- Never assume authorization from the UI alone.
-- Check permissions on every protected server operation.
-- Keep secrets out of source code and Git commits.
-- Include security tests with authorization changes.
-- Do not claim tests pass unless they have been run.
-- Explain files changed, commands to run, and expected results.
+Prompt: Explain how to prevent users from accessing other users' documents by changing document IDs or calling APIs directly.
 
-## Development Entries
+Learning: Hiding interface elements is insufficient. Every protected server operation must authenticate the requester and verify the required document permission.
 
-### Entry 1 — Project Setup
+Verification: Implementation and cross-user authorization tests are pending.
 
-- Date: 2026-10-21
-- Task: Set up the Next.js development environment.
-- Actual prompt: [Paste or accurately summarize your prompt.]
-- AI output used: [Describe what you followed.]
-- Verification: [Record commands run and actual results.]
-- Error or correction: [Record the real issue, or state none observed.]
-- Commit URL: [Add after the relevant commit exists.]
+## Entry 3 — 21 October 2026: Audit Logging
 
-### Entry 2 — Authorization and Access Control
+Prompt: Design an audit trail for document operations, permission changes, and denied access attempts, including a method to detect tampering.
 
-- Date: [Actual date]
-- Actual prompt: [Record your real authorization question.]
-- AI output used: [Describe the proposed solution.]
-- Verification: [Record the unauthorized-access test you actually ran.]
-- Error or correction: [Record the actual result and any correction.]
-- Commit URL: [Add the actual commit URL.]
+Learning: Audit events should record the actor, action, outcome, timestamp, and relevant request details without exposing secrets. A hash chain can help detect tampering but cannot independently prevent complete history rewriting.
 
-### Entry 3 — Audit Trail
+Verification: Audit implementation and integrity tests are pending.
 
-- Date: [Actual date]
-- Actual prompt: [Record your real audit logging question.]
-- AI output used: [Describe the proposed solution.]
-- Verification: [Record actual audit-integrity test results.]
-- Error or correction: [Record what happened.]
-- Commit URL: [Add the actual commit URL.]
+## Entry 4 — 21 October 2026: Private AWS Storage
 
-### Future Entries
+Prompt: Explain how to store TrustVault documents securely in Amazon S3 while preventing public access and supporting permission revocation.
 
-Add more entries as you work. Include the actual prompt,
-output used, verification, corrections, and commit URL.
-Maintain at least five genuine dated entries, including
-at least two focused on authorization and auditing.
+Learning: Use a private bucket, Block Public Access, least-privilege IAM permissions, and server-side authorization before protected file access. Previously downloaded files cannot be recalled.
+
+Verification: S3 configuration and protected document access are pending.
+
+## Entry 5 — 21 October 2026: Security Testing
+
+Prompt: Suggest tests for cross-user isolation, read-only access, permission revocation, and audit logging that detect missing authorization checks.
+
+Learning: Tests should use separate users, attempt unauthorized server requests, verify that protected data remains inaccessible, and check expected audit events.
+
+Verification: Test implementation and execution are pending.
+
+## Responsible AI Usage
+
+I use AI to support learning, implementation planning, and security reviews. I review generated suggestions, investigate problems, and document actual corrections and test results. I will add commit links when the related changes are committed and pushed.

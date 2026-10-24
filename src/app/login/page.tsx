@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useState } from "react";
@@ -9,9 +8,16 @@ type AuthMode = "login" | "signup";
 
 export default function LoginPage() {
   const [mode, setMode] = useState<AuthMode>("login");
+
+  const [fullName, setFullName] = useState("");
+  const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+
   const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+
   const [message, setMessage] = useState("");
   const [messageType, setMessageType] = useState<"error" | "success">(
     "error",
@@ -25,19 +31,72 @@ export default function LoginPage() {
     const supabase = createSupabaseBrowserClient();
 
     try {
-      const result =
-        mode === "login"
-          ? await supabase.auth.signInWithPassword({ email, password })
-          : await supabase.auth.signUp({ email, password });
+      if (mode === "signup") {
+        const normalizedName = fullName.trim();
+        const normalizedUsername = username.trim().toLowerCase();
+        const normalizedEmail = email.trim().toLowerCase();
 
-      if (result.error) {
+        if (!normalizedName || !normalizedUsername) {
+          setMessageType("error");
+          setMessage("Please enter your full name and username.");
+          return;
+        }
+
+        if (!/^[a-zA-Z0-9_]{3,20}$/.test(normalizedUsername)) {
+          setMessageType("error");
+          setMessage(
+            "Username must be 3–20 characters and contain only letters, numbers, or underscores.",
+          );
+          return;
+        }
+
+        if (password.length < 8) {
+          setMessageType("error");
+          setMessage("Password must contain at least 8 characters.");
+          return;
+        }
+
+        if (password !== confirmPassword) {
+          setMessageType("error");
+          setMessage("Passwords do not match.");
+          return;
+        }
+
+        const { data, error } = await supabase.auth.signUp({
+          email: normalizedEmail,
+          password,
+          options: {
+            data: {
+              full_name: normalizedName,
+              display_name: normalizedName,
+              username: normalizedUsername,
+            },
+          },
+        });
+
+        if (error) {
+          setMessageType("error");
+          setMessage(error.message);
+        } else if (!data.session) {
+          setMessageType("success");
+          setMessage(
+            "Account created! Please check your email to confirm your account.",
+          );
+        } else {
+          window.location.href = "/account";
+        }
+
+        return;
+      }
+
+      const { error } = await supabase.auth.signInWithPassword({
+        email: email.trim().toLowerCase(),
+        password,
+      });
+
+      if (error) {
         setMessageType("error");
-        setMessage(result.error.message);
-      } else if (mode === "signup" && !result.data.session) {
-        setMessageType("success");
-        setMessage(
-          "Your account has been created. Please check your email to confirm your account.",
-        );
+        setMessage(error.message);
       } else {
         window.location.href = "/account";
       }
@@ -71,6 +130,7 @@ export default function LoginPage() {
             <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-cyan-400 text-xl font-black text-slate-950 shadow-lg shadow-cyan-500/20">
               T
             </div>
+
             <span className="text-2xl font-bold tracking-tight">
               Trust<span className="text-cyan-400">Vault</span>
             </span>
@@ -90,6 +150,7 @@ export default function LoginPage() {
                   strokeWidth="1.6"
                   strokeLinejoin="round"
                 />
+
                 <path
                   d="M9 12L11 14L15.5 9.5"
                   stroke="currentColor"
@@ -120,6 +181,7 @@ export default function LoginPage() {
               <span className="flex h-8 w-8 items-center justify-center rounded-full border border-white/10 bg-white/5 text-cyan-300">
                 ✓
               </span>
+
               Designed with privacy and access control in mind
             </div>
           </div>
@@ -194,6 +256,60 @@ export default function LoginPage() {
               }}
               className="space-y-5"
             >
+              {/* Full Name */}
+              {mode === "signup" && (
+                <div>
+                  <label
+                    htmlFor="fullName"
+                    className="mb-2 block text-sm font-medium text-slate-300"
+                  >
+                    Full Name
+                  </label>
+
+                  <input
+                    id="fullName"
+                    type="text"
+                    autoComplete="name"
+                    placeholder="Enter your full name"
+                    required
+                    value={fullName}
+                    onChange={(event) => setFullName(event.target.value)}
+                    className="w-full rounded-xl border border-white/10 bg-[#080D1B] px-4 py-3.5 text-sm text-white outline-none transition placeholder:text-slate-600 focus:border-cyan-400/70 focus:ring-4 focus:ring-cyan-400/10"
+                  />
+                </div>
+              )}
+
+              {/* Username */}
+              {mode === "signup" && (
+                <div>
+                  <label
+                    htmlFor="username"
+                    className="mb-2 block text-sm font-medium text-slate-300"
+                  >
+                    Username
+                  </label>
+
+                  <input
+                    id="username"
+                    type="text"
+                    autoComplete="username"
+                    placeholder="Choose a username"
+                    minLength={3}
+                    maxLength={20}
+                    pattern="[A-Za-z0-9_]{3,20}"
+                    required
+                    value={username}
+                    onChange={(event) => setUsername(event.target.value)}
+                    className="w-full rounded-xl border border-white/10 bg-[#080D1B] px-4 py-3.5 text-sm text-white outline-none transition placeholder:text-slate-600 focus:border-cyan-400/70 focus:ring-4 focus:ring-cyan-400/10"
+                  />
+
+                  <p className="mt-2 text-xs text-slate-500">
+                    3–20 characters. Letters, numbers, and underscores only.
+                  </p>
+                </div>
+              )}
+
+              {/* Email */}
               <div>
                 <label
                   htmlFor="email"
@@ -220,6 +336,7 @@ export default function LoginPage() {
                 </div>
               </div>
 
+              {/* Password */}
               <div>
                 <div className="mb-2 flex items-center justify-between">
                   <label
@@ -228,6 +345,14 @@ export default function LoginPage() {
                   >
                     Password
                   </label>
+                  {mode === "login" && (
+                    <Link
+                      href="/forgot-password"
+                      className="text-xs font-semibold text-cyan-400 transition hover:text-cyan-300"
+                    >
+                      Forgot password?
+                    </Link>
+                  )}
                 </div>
 
                 <div className="relative">
@@ -263,6 +388,45 @@ export default function LoginPage() {
                 </p>
               </div>
 
+              {/* Confirm Password */}
+              {mode === "signup" && (
+                <div>
+                  <label
+                    htmlFor="confirmPassword"
+                    className="mb-2 block text-sm font-medium text-slate-300"
+                  >
+                    Confirm Password
+                  </label>
+
+                  <div className="relative">
+                    <input
+                      id="confirmPassword"
+                      type={showConfirmPassword ? "text" : "password"}
+                      autoComplete="new-password"
+                      placeholder="Re-enter your password"
+                      minLength={8}
+                      required
+                      value={confirmPassword}
+                      onChange={(event) =>
+                        setConfirmPassword(event.target.value)
+                      }
+                      className="w-full rounded-xl border border-white/10 bg-[#080D1B] py-3.5 pl-4 pr-20 text-sm text-white outline-none transition placeholder:text-slate-600 focus:border-cyan-400/70 focus:ring-4 focus:ring-cyan-400/10"
+                    />
+
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setShowConfirmPassword((current) => !current)
+                      }
+                      className="absolute right-4 top-1/2 -translate-y-1/2 text-xs font-medium text-slate-400 transition hover:text-cyan-300"
+                    >
+                      {showConfirmPassword ? "Hide" : "Show"}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Message */}
               {message && (
                 <div
                   role="status"
@@ -277,6 +441,7 @@ export default function LoginPage() {
                 </div>
               )}
 
+              {/* Submit */}
               <button
                 type="submit"
                 disabled={loading}

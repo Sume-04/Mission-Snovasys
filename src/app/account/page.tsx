@@ -1,4 +1,8 @@
 
+import NotificationBell from "./notification-bell";
+import DocumentList from "./document-list";
+import UploadButton from "./upload-button";
+import SharedDocumentActions from "./shared-document-actions";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -9,12 +13,87 @@ export default async function AccountPage() {
 
   const {
     data: { user },
-    error,
+    error: authError,
   } = await supabase.auth.getUser();
 
-  if (error || !user) {
+  if (authError || !user) {
     redirect("/login");
   }
+
+  // 1. Fetch documents uploaded by the signed-in user.
+  const {
+    data: documents,
+    error: documentsError,
+  } = await supabase
+    .from("documents")
+    .select(
+      "id, name, category, storage_path, content_type, size_bytes, created_at",
+    )
+    .eq("owner_id", user.id)
+    .order("created_at", { ascending: false })
+    .limit(8);
+
+  // 2. Fetch documents shared with the signed-in user.
+  const {
+    data: sharedDocuments,
+    error: sharedDocumentsError,
+  } = await supabase
+    .from("document_shares")
+    .select(`
+      id,
+      owner_id,
+      permission,
+      created_at,
+      documents (
+        id,
+        name,
+        category,
+        storage_path,
+        content_type,
+        size_bytes,
+        created_at
+      )
+    `)
+    .eq("shared_with", user.id)
+    .order("created_at", { ascending: false });
+
+  // 3. Fetch profile details for the owners who shared documents.
+  const sharedOwnerIds = [
+    ...new Set((sharedDocuments ?? []).map((share) => share.owner_id)),
+  ];
+
+  const { data: sharedOwners } =
+    sharedOwnerIds.length > 0
+      ? await supabase
+          .from("profiles")
+          .select("id, full_name, display_name, username, email")
+          .in("id", sharedOwnerIds)
+      : { data: [] };
+
+  const sharedOwnersById = new Map(
+    (sharedOwners ?? []).map((profile) => [profile.id, profile]),
+  );
+
+  // 4. Convert shared-document results into a simple list.
+  const sharedItems = (sharedDocuments ?? []).flatMap((share) => {
+    const document = Array.isArray(share.documents)
+      ? share.documents[0]
+      : share.documents;
+
+    if (!document) {
+      return [];
+    }
+
+    return [
+      {
+        ...document,
+        shareId: share.id,
+        permission: share.permission,
+        sharedAt: share.created_at,
+        owner: sharedOwnersById.get(share.owner_id) ?? null,
+      },
+    ];
+  });
 
   return (
     <main className="min-h-screen bg-[#070B18] text-white">
@@ -45,16 +124,14 @@ export default async function AccountPage() {
                 Overview
               </Link>
 
-              <div className="flex cursor-not-allowed items-center gap-3 rounded-xl px-4 py-3 text-sm text-slate-500">
+              <div className="flex items-center gap-3 rounded-xl px-4 py-3 text-sm text-slate-400">
                 <span>▤</span>
                 My Documents
-                <span className="ml-auto text-[10px]">Soon</span>
               </div>
 
-              <div className="flex cursor-not-allowed items-center gap-3 rounded-xl px-4 py-3 text-sm text-slate-500">
+              <div className="flex items-center gap-3 rounded-xl px-4 py-3 text-sm text-slate-400">
                 <span>↗</span>
                 Shared with Me
-                <span className="ml-auto text-[10px]">Soon</span>
               </div>
             </nav>
           </div>
@@ -75,7 +152,9 @@ export default async function AccountPage() {
               ◈
             </div>
 
-            <p className="text-sm font-semibold">Your vault, your control</p>
+            <p className="text-sm font-semibold">
+              Your vault, your control
+            </p>
 
             <p className="mt-2 text-xs leading-5 text-slate-400">
               Your account is protected by Supabase authentication.
@@ -99,7 +178,9 @@ export default async function AccountPage() {
 
             <div className="hidden sm:block">
               <p className="text-sm text-slate-400">Workspace</p>
-              <p className="mt-1 text-sm font-semibold">Personal Vault</p>
+              <p className="mt-1 text-sm font-semibold">
+                Personal Vault
+              </p>
             </div>
 
             <div className="flex items-center gap-3">
@@ -107,6 +188,7 @@ export default async function AccountPage() {
                 <p className="max-w-[220px] truncate text-sm font-medium text-white">
                   {user.email}
                 </p>
+
                 <p className="mt-1 text-xs text-slate-500">
                   Personal account
                 </p>
@@ -116,6 +198,7 @@ export default async function AccountPage() {
                 {(user.email?.[0] ?? "U").toUpperCase()}
               </div>
 
+              <NotificationBell />
               <SignOutButton />
             </div>
           </header>
@@ -139,6 +222,7 @@ export default async function AccountPage() {
 
               <div className="flex items-center gap-2 rounded-xl border border-emerald-400/15 bg-emerald-400/5 px-4 py-3">
                 <span className="h-2 w-2 rounded-full bg-emerald-400" />
+
                 <span className="text-sm font-medium text-emerald-300">
                   Session verified
                 </span>
@@ -149,7 +233,9 @@ export default async function AccountPage() {
             <div className="mt-9 grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
               <div className="rounded-2xl border border-white/10 bg-[#0B1020] p-6 transition hover:border-cyan-400/20">
                 <div className="flex items-center justify-between">
-                  <p className="text-sm text-slate-400">Document Library</p>
+                  <p className="text-sm text-slate-400">
+                    Document Library
+                  </p>
 
                   <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-cyan-400/10 text-xl text-cyan-300">
                     ▤
@@ -157,18 +243,19 @@ export default async function AccountPage() {
                 </div>
 
                 <h2 className="mt-5 text-xl font-semibold">
-                  Ready for your files
+                  {documents?.length ?? 0} Recent Documents
                 </h2>
 
                 <p className="mt-2 text-sm leading-6 text-slate-500">
-                  Your document library will appear here when file management
-                  is available.
+                  Your latest documents are available in your secure vault.
                 </p>
               </div>
 
               <div className="rounded-2xl border border-white/10 bg-[#0B1020] p-6 transition hover:border-indigo-400/20">
                 <div className="flex items-center justify-between">
-                  <p className="text-sm text-slate-400">Sharing</p>
+                  <p className="text-sm text-slate-400">
+                    Shared Documents
+                  </p>
 
                   <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-400/10 text-xl text-indigo-300">
                     ↗
@@ -176,18 +263,19 @@ export default async function AccountPage() {
                 </div>
 
                 <h2 className="mt-5 text-xl font-semibold">
-                  Share with confidence
+                  {sharedItems.length} Shared With Me
                 </h2>
 
                 <p className="mt-2 text-sm leading-6 text-slate-500">
-                  Document sharing will be available as the sharing workflow
-                  is implemented.
+                  Access documents shared with your account.
                 </p>
               </div>
 
               <div className="rounded-2xl border border-white/10 bg-[#0B1020] p-6 transition hover:border-emerald-400/20 sm:col-span-2 xl:col-span-1">
                 <div className="flex items-center justify-between">
-                  <p className="text-sm text-slate-400">Account Security</p>
+                  <p className="text-sm text-slate-400">
+                    Account Security
+                  </p>
 
                   <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-400/10 text-xl text-emerald-300">
                     ◈
@@ -204,43 +292,139 @@ export default async function AccountPage() {
               </div>
             </div>
 
-            {/* Document area */}
+            {/* My Documents */}
             <div className="mt-9 overflow-hidden rounded-2xl border border-white/10 bg-[#0B1020]">
               <div className="flex flex-col justify-between gap-4 border-b border-white/10 px-6 py-5 sm:flex-row sm:items-center">
                 <div>
                   <h2 className="text-lg font-semibold">
-                    Recent Documents
+                    My Documents
                   </h2>
 
                   <p className="mt-1 text-sm text-slate-500">
-                    Your recently accessed files will appear here.
+                    Search, filter, and manage your uploaded documents.
                   </p>
                 </div>
 
-                <button
-                  type="button"
-                  disabled
-                  title="Document uploads are not implemented yet"
-                  className="cursor-not-allowed rounded-xl border border-white/10 bg-white/[0.03] px-4 py-2.5 text-sm font-semibold text-slate-500"
-                >
-                  + Upload Document
-                </button>
+                <UploadButton />
               </div>
 
-              <div className="flex min-h-[280px] flex-col items-center justify-center px-6 py-12 text-center">
-                <div className="mb-5 flex h-16 w-16 items-center justify-center rounded-2xl border border-cyan-400/10 bg-cyan-400/5 text-3xl text-cyan-300">
-                  ▤
-                </div>
+              <div className="p-6">
+                {documentsError ? (
+                  <div className="rounded-xl border border-red-400/20 bg-red-400/5 p-4">
+                    <p className="text-sm text-red-300">
+                      Unable to load your documents. Please refresh the page.
+                    </p>
+                  </div>
+                ) : documents && documents.length > 0 ? (
+                  <DocumentList documents={documents} />
+                ) : (
+                  <div className="flex min-h-[220px] flex-col items-center justify-center px-4 text-center">
+                    <div className="mb-5 flex h-16 w-16 items-center justify-center rounded-2xl border border-cyan-400/10 bg-cyan-400/5 text-3xl text-cyan-300">
+                      ▤
+                    </div>
 
-                <h3 className="text-lg font-semibold">
-                  Your vault is ready
-                </h3>
+                    <h3 className="text-lg font-semibold">
+                      No documents yet
+                    </h3>
 
-                <p className="mt-2 max-w-md text-sm leading-6 text-slate-500">
-                  Your document space is prepared. Once document upload and
-                  storage are connected, you will be able to manage your files
-                  here.
+                    <p className="mt-2 max-w-md text-sm leading-6 text-slate-500">
+                      Upload your first document to start building your secure vault.
+                    </p>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Shared With Me */}
+            <div className="mt-9 overflow-hidden rounded-2xl border border-white/10 bg-[#0B1020]">
+              <div className="border-b border-white/10 px-6 py-5">
+                <h2 className="text-lg font-semibold">
+                  Shared With Me
+                </h2>
+
+                <p className="mt-1 text-sm text-slate-500">
+                  Documents shared with you by other TrustVault users.
                 </p>
+              </div>
+
+              <div className="p-6">
+                {sharedDocumentsError ? (
+                  <div className="rounded-xl border border-red-400/20 bg-red-400/5 p-4">
+                    <p className="text-sm text-red-300">
+                      Unable to load shared documents. Please refresh the page.
+                    </p>
+                  </div>
+                ) : sharedItems.length > 0 ? (
+                  <div className="space-y-3">
+                    {sharedItems.map((document) => (
+                      <div
+                        key={document.shareId}
+                        className="flex flex-col justify-between gap-3 rounded-xl border border-white/10 p-4 sm:flex-row sm:items-center"
+                      >
+                        <div className="min-w-0">
+                          <p className="truncate font-medium text-white">
+                            {document.name}
+                          </p>
+
+                          <div className="mt-2 space-y-1">
+                            <p className="text-sm text-slate-300">
+                              Shared by:{" "}
+                              <span className="font-medium text-white">
+                                {document.owner?.full_name ||
+                                  document.owner?.display_name ||
+                                  "Unknown owner"}
+                              </span>
+                            </p>
+
+                            {document.owner?.username && (
+                              <p className="break-all text-xs text-indigo-300">
+                                @{document.owner.username}
+                              </p>
+                            )}
+
+                            {document.owner?.email && (
+                              <p className="break-all text-xs text-slate-400">
+                                {document.owner.email}
+                              </p>
+                            )}
+
+                            <p className="text-xs text-slate-500">
+                              Permission:{" "}
+                              <span className="text-slate-300">
+                                {document.permission === "download"
+                                  ? "View and download"
+                                  : "View only"}
+                              </span>
+                            </p>
+
+                            <p className="text-xs text-slate-500">
+                              Shared on{" "}
+                              {new Date(document.sharedAt).toLocaleDateString()}
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* Updated: pass document metadata for DOCX detection */}
+                        <SharedDocumentActions
+                          documentId={document.id}
+                          permission={document.permission}
+                          contentType={document.content_type ?? ""}
+                          fileName={document.name ?? ""}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="py-10 text-center">
+                    <h3 className="font-semibold">
+                      No shared documents
+                    </h3>
+
+                    <p className="mt-2 text-sm text-slate-500">
+                      Documents shared with your account will appear here.
+                    </p>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -287,3 +471,4 @@ export default async function AccountPage() {
     </main>
   );
 }
+ 

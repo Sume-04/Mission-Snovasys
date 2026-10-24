@@ -24,3 +24,35 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* DOCX document preview */
+.docx-preview {
+  width: 100%;
+  min-height: 400px;
+  overflow: auto;
+  background: #f3f4f6;
+  padding: 16px;
+}
+
+.docx-preview .docx-wrapper {
+  background: #f3f4f6;
+  padding: 16px;
+}
+
+.docx-preview .docx {
+  background: #ffffff;
+  margin: 0 auto 16px;
+  padding: 32px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
+}
+
+/* Keep the document readable on smaller screens */
+@media (max-width: 640px) {
+  .docx-preview {
+    padding: 8px;
+  }
+
+  .docx-preview .docx {
+    padding: 16px;
+  }
+}

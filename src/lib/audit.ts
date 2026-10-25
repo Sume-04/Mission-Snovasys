@@ -25,6 +25,11 @@ export async function writeAuditEvent({
   const supabaseSecretKey = process.env.SUPABASE_SECRET_KEY;
 
   if (!supabaseUrl || !supabaseSecretKey) {
+    console.error("Audit environment check:", {
+      hasSupabaseUrl: Boolean(supabaseUrl),
+      hasSupabaseSecretKey: Boolean(supabaseSecretKey),
+    });
+
     throw new Error("Missing Supabase audit environment variables");
   }
 

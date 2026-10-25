@@ -129,6 +129,15 @@ export default async function AccountPage() {
                 My Documents
               </div>
 
+              {/* Audit Logs button */}
+              <Link
+                href="/admin/activity"
+                className="flex items-center gap-3 rounded-xl px-4 py-3 text-sm text-slate-400 transition hover:bg-cyan-400/10 hover:text-cyan-300"
+              >
+                <span>▤</span>
+                Audit Logs
+              </Link>
+
               <div className="flex items-center gap-3 rounded-xl px-4 py-3 text-sm text-slate-400">
                 <span>↗</span>
                 Shared with Me
@@ -404,7 +413,7 @@ export default async function AccountPage() {
                           </div>
                         </div>
 
-                        {/* Updated: pass document metadata for DOCX detection */}
+                        {/* Pass document metadata for DOCX detection */}
                         <SharedDocumentActions
                           documentId={document.id}
                           permission={document.permission}
@@ -471,4 +480,3 @@ export default async function AccountPage() {
     </main>
   );
 }
- 

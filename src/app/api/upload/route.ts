@@ -102,7 +102,7 @@ export async function POST(request: Request) {
     });
 
     const uploadUrl = await getSignedUrl(s3Client, command, {
-      expiresIn: 60,
+      expiresIn: 300,
     });
 
     // This records URL generation, not confirmation of an S3 upload.
@@ -128,7 +128,7 @@ export async function POST(request: Request) {
       uploadUrl,
       objectKey,
       contentType,
-      expiresIn: 60,
+      expiresIn: 300,
     });
   } catch (error) {
     console.error("Unable to create upload URL:", error);

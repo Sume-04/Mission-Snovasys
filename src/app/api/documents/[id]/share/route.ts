@@ -1,6 +1,7 @@
 
 import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { writeAuditEvent } from "@/lib/audit";
 
 export const runtime = "nodejs";
 
@@ -306,6 +307,23 @@ export async function POST(
       );
     }
 
+    // Audit successful document sharing.
+    try {
+      await writeAuditEvent({
+        actorId: user.id,
+        documentId: document.id,
+        action: "share",
+        outcome: "success",
+        metadata: {
+          recipientId,
+          recipientEmail: email,
+          permission,
+        },
+      });
+    } catch (auditError) {
+      console.error("Share audit logging failed:", auditError);
+    }
+
     // Create a notification only after the share succeeds.
     const sharerName =
       user.user_metadata?.full_name ||
@@ -436,6 +454,21 @@ export async function DELETE(
         { error: "No matching access record was found." },
         { status: 404 },
       );
+    }
+
+    // Audit successful permission revocation.
+    try {
+      await writeAuditEvent({
+        actorId: user.id,
+        documentId: document.id,
+        action: "revoke",
+        outcome: "success",
+        metadata: {
+          recipientId,
+        },
+      });
+    } catch (auditError) {
+      console.error("Revoke audit logging failed:", auditError);
     }
 
     return NextResponse.json({

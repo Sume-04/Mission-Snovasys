@@ -1,47 +1,137 @@
-# AI Prompt and Development Log
 
-This file documents how I use AI to plan, develop, review, and troubleshoot TrustVault. I verify suggestions instead of assuming generated code is correct.
+# AI Prompt and Development Log — TrustVault
 
-## Entry 1 — 21 October 2026: Project Setup
+This document records how AI assistance was used during the development of TrustVault. It describes the development goals, prompts, implementation decisions, and security considerations.
 
-Prompt: Help me plan TrustVault, a secure document-sharing application using Next.js, TypeScript, Supabase, and AWS, with beginner-friendly setup instructions.
+AI-generated suggestions were reviewed and adapted to the existing application. Security behavior was not considered verified merely because code was generated or compiled.
 
-Outcome: Created the Next.js project, installed dependencies, ran the application locally, prepared documentation, and pushed the initial Git commit.
+## 2026-10-20 — Project Foundation and Architecture
 
-Verification: Local application startup and Git setup were checked. Security features were not yet verified.
+**Objective:** Establish the application structure and select an architecture for secure document sharing.
 
-## Entry 2 — 21 October 2026: Document Authorization
+**Prompt used:**
 
-Prompt: Explain how to prevent users from accessing other users' documents by changing document IDs or calling APIs directly.
+"Help me design a secure document-sharing application using Next.js, TypeScript, Supabase, and AWS. The application should support authenticated users, document ownership, private storage, and document-level access control. Recommend an architecture suitable for a student hackathon while avoiding unnecessary AWS costs."
 
-Learning: Hiding interface elements is insufficient. Every protected server operation must authenticate the requester and verify the required document permission.
+**Work completed:**
 
-Verification: Implementation and cross-user authorization tests are pending.
+- Established the Next.js and TypeScript project.
+- Configured Supabase for authentication and document metadata.
+- Planned private Amazon S3 storage.
+- Created project documentation, including the README and security planning documents.
 
-## Entry 3 — 21 October 2026: Audit Logging
+**Security consideration:**
 
-Prompt: Design an audit trail for document operations, permission changes, and denied access attempts, including a method to detect tampering.
+The browser should not be trusted to enforce document permissions. Authorization must be enforced by server-side routes and database policies.
 
-Learning: Audit events should record the actor, action, outcome, timestamp, and relevant request details without exposing secrets. A hash chain can help detect tampering but cannot independently prevent complete history rewriting.
 
-Verification: Audit implementation and integrity tests are pending.
 
-## Entry 4 — 21 October 2026: Private AWS Storage
+## 2026-10-21 — Document-Level Authorization
 
-Prompt: Explain how to store TrustVault documents securely in Amazon S3 while preventing public access and supporting permission revocation.
+**Objective:** Ensure that users cannot access documents owned by other users unless access has been explicitly granted.
 
-Learning: Use a private bucket, Block Public Access, least-privilege IAM permissions, and server-side authorization before protected file access. Previously downloaded files cannot be recalled.
+**Prompt used:**
 
-Verification: S3 configuration and protected document access are pending.
+"Review the document access flow for TrustVault. Help implement server-side authorization so that a user can access their own documents and documents explicitly shared with them, but cannot access another user's documents by changing a document ID or storage path."
 
-## Entry 5 — 21 October 2026: Security Testing
+**Work completed:**
 
-Prompt: Suggest tests for cross-user isolation, read-only access, permission revocation, and audit logging that detect missing authorization checks.
+- Implemented document ownership and sharing checks.
+- Reviewed the behavior of document view and download routes.
+- Used server-side checks rather than relying only on frontend visibility.
 
-Learning: Tests should use separate users, attempt unauthorized server requests, verify that protected data remains inaccessible, and check expected audit events.
+**Security consideration:**
 
-Verification: Test implementation and execution are pending.
+A document ID is not an authorization credential. The server must verify the authenticated user and the document's ownership or permission record for every protected operation.
 
-## Responsible AI Usage
+**Commit:**
+https://github.com/Sume-04/Mission-Snovasys/commit/0f62af0889bb9f3a97a77a5eb38645946a0f5333
 
-I use AI to support learning, implementation planning, and security reviews. I review generated suggestions, investigate problems, and document actual corrections and test results. I will add commit links when the related changes are committed and pushed.
+---
+
+## 2026-10-22 — Audit Logging
+
+**Objective:** Record important document activities and retain audit history.
+
+**Prompt used:**
+
+"Help implement an audit logging helper for TrustVault. Record the authenticated actor, document identifier, action, outcome, request identifier, and relevant metadata. Consider how audit records should remain available when a document is deleted."
+
+**Work completed:**
+
+- Added a reusable audit logging helper.
+- Added audit events for document-related operations.
+- Investigated a foreign-key constraint that prevented audit history from remaining after document deletion.
+- Adjusted the audit schema so historical document identifiers can remain in the audit trail.
+
+**Security consideration:**
+
+Audit records should not be treated as proof that an operation was authorized unless the operation's authorization check was performed first. Audit logging failures should be visible and documented.
+
+
+---
+
+## 2026-10-23 — Private S3 Storage and Upload Flow
+
+**Objective:** Allow authenticated users to upload documents to private S3 without exposing AWS credentials.
+
+**Prompt used:**
+
+"Help implement a secure upload flow for TrustVault using a server-generated S3 presigned URL. The object key must be generated by the server and scoped to the authenticated user. Restrict supported file types and file size, and save document metadata only after the upload."
+
+**Work completed:**
+
+- Implemented a server-side presigned URL endpoint.
+- Generated user-scoped S3 object keys.
+- Added upload restrictions for supported file types and a maximum size of 10 MB.
+- Added S3 object metadata checks before saving the document record.
+
+**Security consideration:**
+
+A presigned URL is a temporary bearer credential. It should be short-lived and scoped to a single object and operation. The S3 bucket should remain private.
+
+**Commit:** 
+https://github.com/Sume-04/Mission-Snovasys/commit/216ac8eb1f30cfba0357af11d37dbf2ed419b3e4
+---
+
+## 2026-10-24 — Upload Validation and Admin Activity
+
+**Objective:** Improve upload validation and provide an administrative view of document activity.
+
+**Prompt used:**
+
+"Review TrustVault's upload and administrative activity flows. Help add server-side verification of uploaded objects and restrict the activity dashboard to explicitly authorized administrators. Identify limitations that should be disclosed in the security documentation."
+
+**Work completed:**
+
+- Added S3 object metadata verification in the document save route.
+- Added basic content-signature checks for supported file types.
+- Added an administrator access check for the activity API.
+- Added an administrative activity page.
+
+**Security consideration:**
+
+S3 metadata alone does not prove that the actual file contents match the declared type. Basic signature checks are not equivalent to malware scanning or full file-format validation.
+
+
+## 2026-10-25 — Build Validation and Security Review
+
+**Objective:** Prepare TrustVault for submission and document known security limitations.
+
+**Prompt used:**
+
+"Review the TrustVault security design and help prepare a threat model covering unauthorized document access, permission changes, upload validation, S3 storage, audit history, and administrator access. Ensure that the automated tests correspond to the authorization risks identified in the threat model."
+
+**Work completed:**
+
+- Ran `npm run build`.
+- Confirmed that compilation and TypeScript checks completed successfully.
+- Reviewed the threat-model and project documentation.
+- Identified further runtime security tests and cleanup improvements.
+
+**Security consideration:**
+
+A successful production build confirms compilation and type checking. It does not prove that authorization controls are correct at runtime. Security tests must be executed and must fail when the relevant authorization control is removed.
+
+**Commit:**
+

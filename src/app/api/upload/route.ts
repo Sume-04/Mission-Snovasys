@@ -6,6 +6,7 @@ import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getS3Client, getS3BucketName } from "@/lib/aws/s3";
+import { writeAuditEvent } from "@/lib/audit";
 
 export const runtime = "nodejs";
 
@@ -20,6 +21,9 @@ const ALLOWED_TYPES = new Set([
 ]);
 
 export async function POST(request: Request) {
+  let actorId: string | null = null;
+  let objectKey: string | null = null;
+
   try {
     const supabase = await createSupabaseServerClient();
 
@@ -34,6 +38,8 @@ export async function POST(request: Request) {
         { status: 401 },
       );
     }
+
+    actorId = user.id;
 
     const body: unknown = await request.json();
 
@@ -84,20 +90,39 @@ export async function POST(request: Request) {
     }
 
     // The key is controlled by the server and scoped to the authenticated user.
-    const objectKey = `${user.id}/${randomUUID()}`;
+    objectKey = `${user.id}/${randomUUID()}`;
 
     const s3Client = getS3Client();
-const s3BucketName = getS3BucketName();
+    const s3BucketName = getS3BucketName();
 
-const command = new PutObjectCommand({
-  Bucket: s3BucketName,
-  Key: objectKey,
-  ContentType: contentType,
-});
+    const command = new PutObjectCommand({
+      Bucket: s3BucketName,
+      Key: objectKey,
+      ContentType: contentType,
+    });
 
     const uploadUrl = await getSignedUrl(s3Client, command, {
       expiresIn: 60,
     });
+
+    // This records URL generation, not confirmation of an S3 upload.
+    try {
+      await writeAuditEvent({
+        actorId: user.id,
+        documentId: null,
+        action: "upload",
+        outcome: "success",
+        metadata: {
+          fileName,
+          contentType,
+          fileSize,
+          objectKey,
+          stage: "presigned_url_created",
+        },
+      });
+    } catch (auditError) {
+      console.error("Upload URL audit logging failed:", auditError);
+    }
 
     return NextResponse.json({
       uploadUrl,
@@ -107,6 +132,23 @@ const command = new PutObjectCommand({
     });
   } catch (error) {
     console.error("Unable to create upload URL:", error);
+
+    if (actorId) {
+      try {
+        await writeAuditEvent({
+          actorId,
+          documentId: null,
+          action: "upload",
+          outcome: "failure",
+          metadata: {
+            objectKey,
+            stage: "presigned_url_creation",
+          },
+        });
+      } catch (auditError) {
+        console.error("Upload failure audit logging failed:", auditError);
+      }
+    }
 
     return NextResponse.json(
       { error: "Unable to prepare the upload. Please try again." },

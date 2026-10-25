@@ -5,6 +5,7 @@ import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getS3Client, getS3BucketName } from "@/lib/aws/s3";
+import { writeAuditEvent } from "@/lib/audit";
 
 export const runtime = "nodejs";
 
@@ -95,10 +96,7 @@ export async function GET(request: Request, context: RouteContext) {
       }
 
       // Download requires explicit download permission
-      if (
-        action === "download" &&
-        share.permission !== "download"
-      ) {
+      if (action === "download" && share.permission !== "download") {
         return NextResponse.json(
           { error: "Download permission has not been granted." },
           { status: 403 },
@@ -146,7 +144,19 @@ export async function GET(request: Request, context: RouteContext) {
       expiresIn: URL_EXPIRATION_SECONDS,
     });
 
-    // 8. Return the signed URL
+    // 8. Record successful view/download
+    // Do not store the signed URL or storage path in the audit metadata.
+    await writeAuditEvent({
+      actorId: user.id,
+      documentId: document.id,
+      action: action as "view" | "download",
+      outcome: "success",
+      metadata: {
+        fileName: safeFileName,
+      },
+    });
+
+    // 9. Return the signed URL
     return NextResponse.json({
       url: signedUrl,
       expiresIn: URL_EXPIRATION_SECONDS,

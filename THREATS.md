@@ -1,50 +1,543 @@
-## TrustVault — Threat Model and Security Plan
 
- 1. Purpose
+# TrustVault Threat Model
 
-TrustVault aims to protect documents, user accounts, sharing permissions, and audit records. This document outlines the main security risks and planned mitigations. Controls will be considered verified only after testing.
+## 1. Overview
 
-2. Main Threats and Mitigations
+TrustVault is a secure document-sharing application built using Next.js, TypeScript, Supabase, and Amazon S3.
 
-- Unauthorized Access: Users may access other users' documents by changing IDs or calling APIs directly. Every protected server operation must verify authentication and document permissions.
+The application allows authenticated users to upload, organize, view, download, and share documents with controlled permissions. It maintains an audit trail of important document activities and provides an administrative activity dashboard.
 
-- Permission Misuse: Viewers may attempt to edit documents or users may try to gain administrator privileges. Roles and permissions must be validated on the server.
+The primary security objective is:
 
-- Access After Revocation: Previously authorized users may attempt to reuse old links. Keep files private and check current permissions on subsequent requests. Previously downloaded files cannot be recalled.
+**A user must not be able to read, download, modify, delete, or share a document unless they own it or have the required permission.**
 
-- Unauthorized Changes: Users may try to modify or delete documents without permission. Verify ownership and edit or delete permissions before performing operations.
+The browser is considered untrusted. An attacker may modify requests, change document IDs, access API routes directly, use another account, or attempt to bypass the application's user interface.
 
-- Cloud Storage Exposure: Incorrect S3 settings or leaked credentials may expose files. Use private storage, enable S3 Block Public Access, apply least-privilege IAM policies, and protect secrets.
+## 2. Assets to Protect
 
-- Audit Tampering: Audit records may be altered or deleted. Record important successful and denied actions, and use integrity verification to help detect tampering. A hash chain alone cannot prevent complete history rewriting.
+The following assets require protection:
 
-- Audit Failures: Operations may succeed without their required audit records. Design reliable audit writes and define safe behavior when logging fails.
+- Document contents stored in Amazon S3.
+- Document metadata stored in Supabase.
+- Document ownership and sharing permissions.
+- User authentication sessions.
+- Audit history.
+- Administrative activity information.
+- AWS credentials and Supabase server-side secrets.
+- Temporary presigned URLs.
 
-- Unsafe File Uploads: Oversized, invalid, or misleading files may introduce risks. Validate uploads on the server and generate safe storage object names.
+## 3. Threats and Mitigations
 
-- Information Leakage: Sensitive metadata, documents, or credentials may appear in API responses, logs, or Git. Restrict returned data and never commit secrets.
+### T-01: Unauthorized Document Access Through ID Manipulation
 
-- Session and Request Abuse: Invalid sessions, malicious inputs, and repeated requests may threaten security. Validate requests, use secure session handling, and apply suitable rate limits.
+An attacker may change a document ID in a view or download request to access a document belonging to another user.
 
-3. Security Principles
+**Potential impact:**
 
-TrustVault will follow these principles:
+- Unauthorized document disclosure.
+- Exposure of sensitive information.
 
-- Deny access by default and enforce authorization on the server.
-- Apply least privilege to database access and AWS permissions.
-- Keep documents private and validate every protected operation.
-- Record relevant security events without logging secrets or document contents.
-- Validate uploaded files and user inputs.
-- Test unauthorized access, permission revocation, and audit integrity.
+**Mitigation:**
 
-4. Security Testing Plan
+- Protected routes authenticate the user.
+- Server-side authorization checks verify document ownership or sharing permissions.
+- Document IDs are not treated as authorization credentials.
+- Access decisions are made on the server rather than relying on frontend visibility.
 
-Planned tests will verify that users cannot access each other's documents, viewers cannot edit or delete files, permissions cannot be self-assigned, and revoked access is denied on subsequent requests. Additional tests will cover private S3 access, invalid uploads, sensitive data exposure, missing audit events, and audit tampering.
+**Test expectation:**
 
-Actual test results will be documented after implementation and execution.
+- Sign in as User A.
+- Attempt to access User B's private document using its document ID.
+- Verify that the request is denied and no document content is returned.
 
-5. Accepted Risks and Current Status
+### T-02: Document ID Enumeration
 
-Users may retain copies of documents downloaded before access was revoked. Audit mechanisms can detect certain forms of tampering but cannot guarantee integrity if all administrative controls and verification data are compromised. Cloud services may also incur costs; budget alerts do not guarantee a spending limit.
+An attacker may attempt to guess or enumerate document IDs to discover documents belonging to other users.
 
-The project foundation and initial documentation are complete. Authentication, database permissions, private S3 integration, audit logging, and automated security tests remain under development or planned. This document will be updated as features are implemented and verified.
+**Potential impact:**
+
+- Unauthorized document access.
+- Exposure of document metadata.
+
+**Mitigation:**
+
+- Every protected document request checks the authenticated user's access.
+- Knowing a document ID does not grant permission.
+
+**Test expectation:**
+
+- Attempt to access multiple document IDs belonging to another user.
+- Verify that unauthorized requests do not return document content or protected metadata.
+
+### T-03: Unauthorized Download by a Viewer
+
+A user may have permission to view a document but not download it. The user may attempt to call the download API directly.
+
+**Potential impact:**
+
+- Unauthorized copying or distribution of documents.
+
+**Mitigation:**
+
+- View and download permissions are handled separately.
+- Download requests perform server-side permission checks.
+
+**Test expectation:**
+
+- Grant User B view-only access to User A's document.
+- Attempt to download the document directly through the API.
+- Verify that the download is denied.
+- Grant download permission and verify that the permitted download succeeds.
+
+### T-04: Access After Permission Revocation
+
+A user may attempt to access a document after the owner has revoked their permission.
+
+**Potential impact:**
+
+- Continued unauthorized access to a document.
+
+**Mitigation:**
+
+- Protected requests check the current permission state.
+- Revoked permissions should no longer authorize access.
+
+**Test expectation:**
+
+- Share a document with User B.
+- Confirm that User B can access it.
+- Revoke the permission.
+- Retry the same protected request and verify that access is denied.
+
+### T-05: S3 Storage Path Manipulation
+
+An attacker may modify the storage path in a request to access another user's S3 object.
+
+**Potential impact:**
+
+- Unauthorized document access.
+- Incorrect document metadata being associated with an object.
+
+**Mitigation:**
+
+- S3 object keys are generated by the server.
+- The save route verifies that the storage path belongs to the authenticated user.
+- The storage path must follow the expected user-ID and UUID format.
+
+**Test expectation:**
+
+- Submit another user's storage path to the document save endpoint.
+- Verify that the request is rejected.
+
+### T-06: Unauthenticated API Access
+
+An attacker may call protected API routes without signing in or with an invalid or expired session.
+
+**Potential impact:**
+
+- Unauthorized document operations.
+- Exposure or manipulation of protected data.
+
+**Mitigation:**
+
+- Protected routes use Supabase authentication checks.
+- The server verifies the authenticated user before performing protected operations.
+
+**Test expectation:**
+
+- Call protected routes without a valid session.
+- Verify that the server returns an unauthorized response.
+
+### T-07: Unauthorized Document Deletion
+
+A user may attempt to delete a document owned by another user by changing the document ID in the request.
+
+**Potential impact:**
+
+- Unauthorized deletion.
+- Loss of document availability.
+
+**Mitigation:**
+
+- The delete route checks authentication and document ownership.
+- The server does not rely on the frontend to determine whether deletion is permitted.
+
+**Test expectation:**
+
+- Sign in as User B.
+- Attempt to delete User A's document.
+- Verify that the operation is denied and the document remains available to its owner.
+
+### T-08: Unauthorized Sharing or Permission Revocation
+
+A user may attempt to grant or revoke access to a document they do not own.
+
+**Potential impact:**
+
+- Unauthorized disclosure.
+- Unauthorized permission changes.
+
+**Mitigation:**
+
+- Share and revoke routes perform server-side ownership checks.
+- The server validates the requesting user's authority before changing permissions.
+
+**Test expectation:**
+
+- Attempt to share or revoke access to another user's document.
+- Verify that the request is denied and the permission records remain unchanged.
+
+### T-09: Upload of Unsupported or Oversized Files
+
+An attacker may upload an unsupported file type or a file larger than the allowed limit.
+
+**Potential impact:**
+
+- Storage abuse.
+- Unexpected file handling.
+- Increased storage costs.
+
+**Mitigation:**
+
+- Upload routes restrict supported file types.
+- The maximum permitted upload size is 10 MB.
+- The save route checks the actual S3 object size against the supplied size.
+
+**Test expectation:**
+
+- Attempt to upload an unsupported file type.
+- Attempt to upload a file larger than 10 MB.
+- Verify that the requests are rejected.
+
+### T-10: File Type Spoofing
+
+An attacker may upload arbitrary bytes while declaring the file to be a PDF, image, or DOCX document.
+
+**Potential impact:**
+
+- Malformed or misleading content being stored.
+- Unexpected behavior in document preview or processing.
+
+**Mitigation:**
+
+- The save route checks S3 object metadata.
+- Basic content-signature checks are performed against the actual bytes retrieved from S3.
+
+**Test expectation:**
+
+- Upload content that does not match its declared file type.
+- Verify that the save route rejects the file.
+
+**Limitation:**
+
+Basic signature validation is not a complete file-format parser or malware scanner.
+
+### T-11: Malicious or Unexpected File Names
+
+An attacker may submit file names containing path traversal strings, null bytes, unusual characters, or excessive length.
+
+**Potential impact:**
+
+- Metadata corruption.
+- Unsafe handling by downstream components.
+
+**Mitigation:**
+
+- S3 object keys are generated by the server rather than derived from the file name.
+- The document save route validates the file name's length and rejects null bytes.
+
+**Test expectation:**
+
+- Submit file names containing traversal strings, null bytes, and excessive length.
+- Verify that the application handles them safely.
+
+### T-12: Presigned URL Reuse or Leakage
+
+An attacker may obtain a valid presigned URL and use it before the URL expires.
+
+**Potential impact:**
+
+- Unauthorized upload to the object covered by the URL.
+
+**Mitigation:**
+
+- Presigned URLs are short-lived.
+- The URL is scoped to a server-generated object key and upload operation.
+- AWS credentials are not sent to the browser.
+- The S3 bucket is intended to remain private.
+
+**Test expectation:**
+
+- Verify the expiration time.
+- Confirm that the URL cannot be used for another object or operation.
+
+**Residual risk:**
+
+Anyone who obtains a valid presigned URL may be able to use it until it expires.
+
+### T-13: Public Access to S3 Objects
+
+An attacker may attempt to access an S3 object directly through a public URL.
+
+**Potential impact:**
+
+- Unauthorized document disclosure.
+
+**Mitigation:**
+
+- Documents are stored in a private S3 bucket.
+- Application access is mediated through authenticated and authorized routes.
+
+**Test expectation:**
+
+- Verify the bucket's public-access settings in AWS.
+- Attempt unauthenticated access to a stored object and confirm that it is denied.
+
+### T-14: Unauthorized Access to the Admin Activity Dashboard
+
+A regular user may attempt to access administrative activity information through the page or API directly.
+
+**Potential impact:**
+
+- Exposure of audit history.
+- Exposure of document activity and permission changes.
+
+**Mitigation:**
+
+- The admin API checks administrator membership.
+- The frontend is not treated as the authorization boundary.
+
+**Test expectation:**
+
+- Sign in as a regular user.
+- Call the admin activity API directly.
+- Verify that the request is denied.
+- Confirm that an authorized administrator can access the endpoint.
+
+### T-15: Audit Record Manipulation
+
+An attacker may attempt to create, modify, or delete audit records directly.
+
+**Potential impact:**
+
+- Loss of audit integrity.
+- Misleading activity history.
+
+**Mitigation:**
+
+- Audit events are written server-side through the audit helper.
+- Client-side access to audit records should be restricted by database permissions and Row Level Security.
+
+**Test expectation:**
+
+- Attempt direct client-side insertion, update, and deletion of audit records.
+- Verify that unauthorized operations are rejected by database policies.
+
+**Limitation:**
+
+Database policy configuration must be independently verified.
+
+### T-16: Audit History Loss After Document Deletion
+
+Deleting a document may also delete its audit history if the audit record depends on the document row.
+
+**Potential impact:**
+
+- Loss of historical evidence.
+
+**Mitigation:**
+
+- The audit schema has been adjusted so historical document identifiers can remain after document deletion.
+
+**Test expectation:**
+
+- Delete a document.
+- Confirm that the corresponding audit history remains available.
+
+### T-17: Malformed API Requests
+
+An attacker may submit malformed JSON, missing fields, unexpected data types, or invalid values.
+
+**Potential impact:**
+
+- Unexpected server behavior.
+- Unhandled errors.
+- Unauthorized or unintended operations.
+
+**Mitigation:**
+
+- API routes validate request bodies and field types.
+- Invalid requests return controlled error responses.
+
+**Test expectation:**
+
+- Submit malformed JSON.
+- Submit missing fields and incorrect data types.
+- Verify that the server rejects the requests without performing protected operations.
+
+### T-18: Supabase Row Level Security Bypass
+
+An attacker may use a Supabase client or public key to access database rows directly, bypassing the application's UI.
+
+**Potential impact:**
+
+- Unauthorized access to document metadata.
+- Unauthorized modification of permissions or audit records.
+
+**Mitigation:**
+
+- Supabase Row Level Security policies are intended to restrict access.
+- Server-side authorization checks are used for protected operations.
+
+**Test expectation:**
+
+- Use a regular user's session to query or modify another user's document metadata directly.
+- Verify that the relevant RLS policies reject unauthorized operations.
+
+**Limitation:**
+
+RLS policies must be tested independently of the application routes.
+
+### T-19: Ownership Manipulation
+
+An attacker may submit another user's ID as the document owner in a request.
+
+**Potential impact:**
+
+- Unauthorized ownership assignment.
+- Access-control bypass.
+
+**Mitigation:**
+
+- The document save route derives the owner ID from the authenticated user.
+- Client-supplied ownership information is not trusted.
+
+**Test expectation:**
+
+- Submit a request containing another user's owner ID.
+- Verify that the server uses the authenticated user's ID or rejects the request.
+
+### T-20: Audit Logging Failure
+
+An audit database operation may fail while a document operation succeeds.
+
+**Potential impact:**
+
+- Missing audit records.
+- Incomplete activity history.
+
+**Mitigation:**
+
+- Audit failures are logged by the application.
+- Audit logging failure does not silently claim that the audit record was successfully written.
+
+**Test expectation:**
+
+- Simulate an audit insert failure.
+- Observe the operation result and server logs.
+
+**Limitation:**
+
+Some successful operations may not be rolled back when audit logging fails.
+
+## 4. Automated Authorization Test Expectations
+
+The automated tests must correspond to the threats identified above.
+
+The tests should perform actual requests against protected routes or database policies. They should not only verify that frontend buttons are hidden.
+
+The following cases should be covered:
+
+- User A can access their own document.
+- User B cannot access User A's private document.
+- Changing a document ID does not bypass authorization.
+- Changing an S3 storage path does not bypass authorization.
+- A view-only user cannot download a document without download permission.
+- A user with download permission can download the permitted document.
+- Revoked access prevents subsequent protected requests.
+- A user cannot delete another user's document.
+- A user cannot share or revoke another user's document.
+- Unauthenticated requests to protected routes are rejected.
+- A regular user cannot access the administrative activity API.
+- A user cannot save metadata for an object belonging to another user.
+- Unsupported file types and oversized files are rejected.
+- Mismatched file content and declared types are rejected.
+- Unauthorized direct database operations are rejected by RLS policies.
+
+The tests must be capable of detecting a missing authorization check.
+
+For example, if the document ownership check is removed from a route, the test that attempts to access another user's document must fail.
+
+A test that only checks a status code without establishing the user, ownership, permission state, and protected operation may provide insufficient evidence.
+
+The production build has completed successfully, including compilation and TypeScript validation. A successful build is not equivalent to a successful security test run.
+
+## 5. Accepted Risks
+
+### AR-01: Basic File Validation Is Not Malware Scanning
+
+TrustVault checks supported file types, file size, and basic content signatures. These checks do not fully parse every file format and do not detect all malicious content.
+
+**Reason accepted:**
+
+The project is a hackathon prototype with limited development time and infrastructure.
+
+**Future improvement:**
+
+Integrate malware scanning or an isolated file-scanning service before documents are made available to other users.
+
+### AR-02: Invalid or Abandoned Uploads May Remain in S3
+
+The browser uploads directly to S3 before the save endpoint validates the object. If validation fails or metadata saving fails, the object may remain in the private bucket.
+
+**Reason accepted:**
+
+Direct-to-S3 uploads reduce application-server bandwidth and simplify the prototype.
+
+**Future improvement:**
+
+Delete invalid objects after verification failure and configure a lifecycle cleanup policy for abandoned uploads.
+
+### AR-03: Presigned URLs Are Bearer Credentials
+
+Anyone who obtains a valid presigned URL may be able to use it for the operation and object covered by that URL until it expires.
+
+**Reason accepted:**
+
+Presigned URLs support direct uploads without exposing AWS credentials to the browser.
+
+**Mitigation:**
+
+Keep URLs short-lived, scope them to one object and operation, and avoid logging or exposing them unnecessarily.
+
+### AR-04: Audit Logging Is Not Fully Tamper-Proof
+
+Audit records are written server-side, but the prototype does not use a separate immutable audit storage system. Some operations may succeed even if audit logging fails.
+
+**Reason accepted:**
+
+A separate immutable logging service would increase infrastructure complexity and cost.
+
+**Future improvement:**
+
+Use restricted database permissions, monitor audit failures, and consider a separate append-only or immutable audit destination.
+
+### AR-05: Comprehensive Production Security Testing Is Incomplete
+
+The application has not been represented as having undergone an independent penetration test or comprehensive security audit.
+
+**Reason accepted:**
+
+This is a student hackathon prototype.
+
+**Future improvement:**
+
+Perform a structured security review, test RLS policies independently, add automated authorization tests, and review AWS and Supabase configuration before production use.
+
+## 6. Security Summary
+
+TrustVault is designed around the principle that document access must be authorized on the server for every protected operation.
+
+The primary defenses are authentication, ownership and sharing checks, private S3 storage, document-level permissions, upload validation, and audit logging.
+
+The project documents implemented controls, test expectations, and accepted limitations. Security claims should be updated only when supported by implementation review or test evidence.

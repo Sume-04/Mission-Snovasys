@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { DeleteObjectCommand } from "@aws-sdk/client-s3";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getS3Client, getS3BucketName } from "@/lib/aws/s3";
+import { writeAuditEvent } from "@/lib/audit";
 
 export const runtime = "nodejs";
 
@@ -14,6 +15,9 @@ export async function DELETE(
   _request: Request,
   context: RouteContext,
 ) {
+  let actorId: string | null = null;
+  let documentId: string | null = null;
+
   try {
     const supabase = await createSupabaseServerClient();
 
@@ -29,7 +33,10 @@ export async function DELETE(
       );
     }
 
+    actorId = user.id;
+
     const { id } = await context.params;
+    documentId = id;
 
     if (!id) {
       return NextResponse.json(
@@ -89,12 +96,49 @@ export async function DELETE(
       );
     }
 
+    // Record the successful document deletion in the audit trail.
+    try {
+      await writeAuditEvent({
+        actorId: user.id,
+        documentId: document.id,
+        action: "delete",
+        outcome: "success",
+        metadata: {
+          storagePath: document.storage_path,
+        },
+      });
+    } catch (auditError) {
+      // The document is already deleted. Do not report deletion as failed
+      // solely because audit logging failed.
+      console.error("Delete audit logging failed:", auditError);
+    }
+
     return NextResponse.json({
       success: true,
       message: "Document deleted successfully.",
     });
   } catch (error) {
     console.error("Document deletion failed:", error);
+
+    // Best-effort failure audit for unexpected errors.
+    if (actorId && documentId) {
+      try {
+        await writeAuditEvent({
+          actorId,
+          documentId,
+          action: "delete",
+          outcome: "failure",
+          metadata: {
+            error:
+              error instanceof Error
+                ? error.message
+                : "Unknown deletion error",
+          },
+        });
+      } catch (auditError) {
+        console.error("Delete failure audit logging failed:", auditError);
+      }
+    }
 
     return NextResponse.json(
       { error: "Something went wrong while deleting the document." },

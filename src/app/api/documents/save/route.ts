@@ -1,7 +1,10 @@
-
 import { NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
-import { HeadObjectCommand } from "@aws-sdk/client-s3";
+import {
+  GetObjectCommand,
+  HeadObjectCommand,
+} from "@aws-sdk/client-s3";
+
 import { writeAuditEvent } from "@/lib/audit";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getS3Client, getS3BucketName } from "@/lib/aws/s3";
@@ -18,14 +21,94 @@ const ALLOWED_TYPES = new Set([
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 ]);
 
-// Expected S3 key format:
-// <authenticated-user-id>/<random-uuid>
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+type SupportedContentType =
+  | "application/pdf"
+  | "image/jpeg"
+  | "image/png"
+  | "text/plain"
+  | "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+
+/**
+ * Performs a basic signature/content check against the actual S3 bytes.
+ *
+ * Note:
+ * - DOCX is a ZIP-based format. This checks its ZIP signature, not the
+ *   complete internal Word document structure.
+ * - TXT is checked as valid UTF-8 text without NUL bytes.
+ * - These checks are not malware scanning.
+ */
+function matchesFileContent(
+  bytes: Uint8Array,
+  contentType: SupportedContentType,
+): boolean {
+  if (bytes.length === 0) {
+    return false;
+  }
+
+  switch (contentType) {
+    case "application/pdf":
+      return (
+        bytes.length >= 5 &&
+        Buffer.from(bytes.subarray(0, 5)).toString("ascii") === "%PDF-"
+      );
+
+    case "image/jpeg":
+      return (
+        bytes.length >= 3 &&
+        bytes[0] === 0xff &&
+        bytes[1] === 0xd8 &&
+        bytes[2] === 0xff
+      );
+
+    case "image/png":
+      return (
+        bytes.length >= 8 &&
+        bytes[0] === 0x89 &&
+        bytes[1] === 0x50 &&
+        bytes[2] === 0x4e &&
+        bytes[3] === 0x47 &&
+        bytes[4] === 0x0d &&
+        bytes[5] === 0x0a &&
+        bytes[6] === 0x1a &&
+        bytes[7] === 0x0a
+      );
+
+    case "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+      // DOCX files are ZIP archives. This is a basic signature check only.
+      return (
+        bytes.length >= 4 &&
+        bytes[0] === 0x50 &&
+        bytes[1] === 0x4b &&
+        bytes[2] === 0x03 &&
+        bytes[3] === 0x04
+      );
+
+    case "text/plain": {
+      // Reject binary-looking content.
+      if (bytes.some((byte) => byte === 0x00)) {
+        return false;
+      }
+
+      // Ensure the bytes can be decoded as valid UTF-8.
+      try {
+        new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+        return true;
+      } catch {
+        return false;
+      }
+    }
+
+    default:
+      return false;
+  }
+}
+
 export async function POST(request: Request) {
   try {
-    // 1. Authenticate the user
+    // 1. Authenticate the user.
     const supabase = await createSupabaseServerClient();
 
     const {
@@ -40,7 +123,7 @@ export async function POST(request: Request) {
       );
     }
 
-    // 2. Verify the current session
+    // 2. Verify the current session.
     const {
       data: { session },
       error: sessionError,
@@ -60,7 +143,7 @@ export async function POST(request: Request) {
       );
     }
 
-    // 3. Parse and validate the request body
+    // 3. Parse and validate the request body.
     let body: unknown;
 
     try {
@@ -125,7 +208,8 @@ export async function POST(request: Request) {
       );
     }
 
-    // 4. Validate the S3 key
+    // 4. Validate the S3 key.
+    // Expected: <authenticated-user-id>/<random-uuid>
     const storagePathParts = storagePath.split("/");
 
     if (
@@ -139,13 +223,16 @@ export async function POST(request: Request) {
       );
     }
 
-    // 5. Verify the uploaded object in S3
+    const s3Client = getS3Client();
+    const bucketName = getS3BucketName();
+
+    // 5. Verify the S3 object's metadata.
     let s3Object;
 
     try {
-      s3Object = await getS3Client().send(
+      s3Object = await s3Client.send(
         new HeadObjectCommand({
-          Bucket: getS3BucketName(),
+          Bucket: bucketName,
           Key: storagePath,
         }),
       );
@@ -186,10 +273,58 @@ export async function POST(request: Request) {
       );
     }
 
-    // 6. Save document metadata
-    // Generate the ID on the server.
-    // Avoid INSERT ... RETURNING so the INSERT does not need
-    // to return the row through the SELECT policy.
+    // 6. Read the actual S3 bytes and validate the file signature/content.
+    let fileBytes: Uint8Array;
+
+    try {
+      const objectResponse = await s3Client.send(
+        new GetObjectCommand({
+          Bucket: bucketName,
+          Key: storagePath,
+        }),
+      );
+
+      if (!objectResponse.Body) {
+        return NextResponse.json(
+          { error: "The uploaded file content could not be read." },
+          { status: 400 },
+        );
+      }
+
+      fileBytes = await objectResponse.Body.transformToByteArray();
+    } catch (error) {
+      console.error("Unable to read uploaded S3 object:", error);
+
+      return NextResponse.json(
+        { error: "Unable to verify the uploaded file content." },
+        { status: 400 },
+      );
+    }
+
+    // Confirm the retrieved byte count agrees with the S3 metadata.
+    if (fileBytes.length !== actualSize) {
+      return NextResponse.json(
+        { error: "The uploaded file content is incomplete or invalid." },
+        { status: 400 },
+      );
+    }
+
+    if (
+      !matchesFileContent(
+        fileBytes,
+        contentType as SupportedContentType,
+      )
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "The file content does not match its declared file type.",
+        },
+        { status: 400 },
+      );
+    }
+
+    // 7. Save document metadata only after validation succeeds.
     const documentId = randomUUID();
 
     const { error: insertError } = await supabase
@@ -222,7 +357,7 @@ export async function POST(request: Request) {
       );
     }
 
-    // 7. Record the successful upload in the audit trail
+    // 8. Record the successful upload in the audit trail.
     // Audit failure does not undo a successful document save.
     try {
       await writeAuditEvent({
@@ -234,6 +369,7 @@ export async function POST(request: Request) {
           documentName: trimmedName,
           contentType: actualContentType,
           sizeBytes: actualSize,
+          validation: "s3_content_signature_checked",
         },
       });
     } catch (auditError) {
